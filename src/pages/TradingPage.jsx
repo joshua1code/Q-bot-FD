@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-// Core Chart.js imports
+// Chart.js core
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -12,22 +12,16 @@ import {
   Title,
   Tooltip,
   Legend,
-  TimeScale,           // Required for time-based x-axis
+  TimeScale,
 } from 'chart.js';
 
-// Financial chart imports (THIS is the key fix)
-import {
-  CandlestickController,
-  CandlestickElement,
-} from 'chartjs-chart-financial';
-
-// Date adapter for time scale (Luxon recommended for good timezone/i18n support)
+// Financial charts
+import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial';
 import 'chartjs-adapter-luxon';
-
 import { Chart } from 'react-chartjs-2';
 import '../App.css';
 
-// Register everything once (best at module level)
+// Register Chart.js components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -43,12 +37,14 @@ ChartJS.register(
 );
 
 const API_BASE = 'https://qbot.mooo.com/api/trade';
+const WS_URL = 'wss://qbot.mooo.com/api/trade/chart';
 
 function TradingPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
 
-  // Trade parameters from HomePage
   const {
     selectedStock = 'Unknown',
     amount = 0,
@@ -58,101 +54,149 @@ function TradingPage() {
   } = location.state || {};
 
   const [chartData, setChartData] = useState({
-    datasets: [
-      {
-        label: `${selectedStock} Price`,
-        data: [], // Will be filled with candlestick data
-        type: 'candlestick',
-        borderColor: '#00c853',
-        backgroundColor: '#00c853',
-      },
-    ],
+    datasets: [{ label: `${selectedStock} Price`, type: 'candlestick', data: [] }],
   });
-
-  const [tableData, setTableData] = useState([]); // Live trade updates
+  const [tableData, setTableData] = useState([]);
+  const [tradeStatus, setTradeStatus] = useState('Connecting...');
   const [showPopup, setShowPopup] = useState(false);
-  const [tradeStatus, setTradeStatus] = useState('Running');
+  const [wsError, setWsError] = useState(null);
+
+  // 1️⃣ START BOT
+  useEffect(() => {
+    const startBot = async () => {
+      try {
+        const res = await fetch(API_BASE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ stock: selectedStock, amount }),
+        });
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          console.error('Bot start failed:', res.status, res.statusText, errText);
+          setTradeStatus('Failed to start bot');
+        } else {
+          console.log('Bot start requested (status:', res.status, ')');
+        }
+      } catch (err) {
+        console.error('Failed to start trade bot:', err);
+        setTradeStatus('Failed to start bot');
+      }
+    };
+    startBot();
+  }, [selectedStock, amount]);
+
 
   useEffect(() => {
-    // Poll backend for live trade data
-    const interval = setInterval(async () => {
-      try {
-        const response = await fetch(`${API_BASE}/live`, {
-          credentials: 'include',
-          headers: { 'Accept': 'application/json' },
-        });
+    let isMounted = true;
 
-        if (!response.ok) throw new Error('Live data fetch failed');
+    const connectWs = () => {
+      if (!isMounted) return;
 
-        const data = await response.json();
+      console.log('Attempting WebSocket connection...');
+      setTradeStatus('Connecting to live data...');
+      setWsError(null);
 
-        // Update chart (expect candlestick format: [{x: time, o: open, h: high, l: low, c: close}, ...])
-        if (data.chart && Array.isArray(data.chart)) {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('Chart WebSocket connected');
+        setTradeStatus('Running');
+        setWsError(null);
+      };
+
+      ws.onmessage = (event) => {
+        console.log('WS message received:', event.data); // ← key debug line
+
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+          console.log('Parsed payload:', payload);
+        } catch (e) {
+          console.warn('Invalid WS JSON:', event.data);
+          return;
+        }
+
+        // Candlestick batch
+        if (Array.isArray(payload)) {
           setChartData({
             datasets: [
               {
                 label: `${selectedStock} Price`,
-                data: data.chart.map(item => ({
-                  x: item.time || item.timestamp, // should be number (ms) or ISO string
-                  o: item.open,
-                  h: item.high,
-                  l: item.low,
-                  c: item.close,
-                })),
                 type: 'candlestick',
-                borderColor: (context) => {
-                  const index = context.dataIndex;
-                  const value = context.dataset.data[index];
-                  return value.c >= value.o ? '#00c853' : '#ff5252'; // Green up, red down
-                },
-                backgroundColor: (context) => {
-                  const index = context.dataIndex;
-                  const value = context.dataset.data[index];
-                  return value.c >= value.o ? 'rgba(0,200,83,0.5)' : 'rgba(255,82,82,0.5)';
-                },
+                data: payload.map((c) => ({
+                  x: new Date(c.time || c.timestamp),
+                  o: Number(c.open) || 0,
+                  h: Number(c.high) || 0,
+                  l: Number(c.low) || 0,
+                  c: Number(c.close) || 0,
+                })),
               },
             ],
           });
         }
 
-        // Update table (live orders/PnL)
-        if (data.table && Array.isArray(data.table)) {
-          setTableData(data.table);
+        // Trade execution
+        if (payload?.type === 'trade') {
+          setTableData((prev) => [
+            {
+              time: payload.time || '—',
+              type: payload.side || '—',
+              amount: Number(payload.amount) || 0,
+              price: Number(payload.price) || 0,
+              pnl: Number(payload.pnl) || 0,
+            },
+            ...prev,
+          ]);
         }
 
-        // Check if trade completed
-        if (data.tradeComplete || data.status === 'completed') {
-          setShowPopup(true);
+        // Completion
+        if (payload?.status === 'completed') {
           setTradeStatus('Completed');
-          clearInterval(interval);
+          setShowPopup(true);
+          ws.close();
         }
-      } catch (err) {
-        console.error('Live trade data error:', err);
-      }
-    }, 5000); // Poll every 5 seconds
+      };
 
-    return () => clearInterval(interval);
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        setWsError('Connection error – retrying...');
+      };
+
+      ws.onclose = (e) => {
+        console.log('WebSocket closed:', e.code, e.reason);
+        if (isMounted) {
+          setWsError(`Disconnected (code ${e.code}) – retrying...`);
+          // Reconnect after delay (avoid rapid loop if auth issue)
+          reconnectTimerRef.current = setTimeout(connectWs, 5000);
+        }
+      };
+    };
+
+    connectWs();
+
+    return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimerRef.current);
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
   }, [selectedStock]);
 
+  // Chart options (unchanged)
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: { display: true, labels: { color: '#e0e0e0' } },
+      legend: { labels: { color: '#e0e0e0' } },
       tooltip: { enabled: true },
     },
     scales: {
       x: {
-        type: 'time',                        // Crucial for dates/timestamps
-        time: {
-          unit: 'minute',                    // Adjust to 'day', 'hour', etc. based on your data density
-          tooltipFormat: 'MMM dd, yyyy HH:mm',
-          displayFormats: {
-            minute: 'HH:mm',
-            hour: 'HH:mm',
-            day: 'MMM dd',
-          },
-        },
+        type: 'time',
+        time: { unit: 'minute', tooltipFormat: 'MMM dd, yyyy HH:mm' },
         ticks: { color: '#e0e0e0' },
         grid: { color: 'rgba(255,255,255,0.1)' },
       },
@@ -166,18 +210,43 @@ function TradingPage() {
   return (
     <div className="trading-page">
       <h2>Live Trading: {selectedStock}</h2>
-      <p className="trade-info">
-        Amount: ${Number(amount).toFixed(2)} | Duration: {timeRange} | 
-        {stopLoss && ` Stop Loss: $${stopLoss}`} {takeProfit && ` | Take Profit: $${takeProfit}`}
-      </p>
-      <p className="trade-status">Status: {tradeStatus}</p>
 
-      {/* Modern Candlestick Chart */}
-      <div className="chart-container" style={{ height: '400px', width: '100%' }}>
+      <p className="trade-info">
+        Amount: ${Number(amount).toFixed(2)} | Duration: {timeRange}
+        {stopLoss && ` | Stop Loss: $${stopLoss}`}
+        {takeProfit && ` | Take Profit: $${takeProfit}`}
+      </p>
+
+      <p className="trade-status">
+        Status: {tradeStatus}
+        {wsError && <span style={{ color: '#ff6b6b', marginLeft: '8px' }}>{wsError}</span>}
+      </p>
+
+      {/* Chart with loading overlay */}
+      <div className="chart-container" style={{ height: 400, position: 'relative' }}>
+        {chartData.datasets[0].data.length === 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(0,0,0,0.4)',
+              color: '#aaa',
+              fontSize: '1.2rem',
+              zIndex: 1,
+            }}
+          >
+            {tradeStatus.includes('Connecting') || tradeStatus === 'Running'
+              ? 'Waiting for live chart data...'
+              : 'No data available'}
+          </div>
+        )}
         <Chart type="candlestick" data={chartData} options={chartOptions} />
       </div>
 
-      {/* Live Trade Table */}
+      {/* Trade History Table */}
       <table className="data-table">
         <thead>
           <tr>
@@ -189,23 +258,24 @@ function TradingPage() {
           </tr>
         </thead>
         <tbody>
-          {tableData.map((row, idx) => (
-            <tr key={idx}>
-              <td>{row.time}</td>
-              <td>{row.type || 'Buy'}</td>
-              <td>${row.amount?.toFixed(2) || '0.00'}</td>
-              <td>${row.price?.toFixed(2) || '0.00'}</td>
-              <td className={`profit-loss ${row.pnl >= 0 ? 'positive' : 'negative'}`}>
-                {row.pnl >= 0 ? '+' : '-'}${Math.abs(row.pnl || 0).toFixed(2)}
-              </td>
-            </tr>
-          ))}
-          {tableData.length === 0 && (
+          {tableData.length === 0 ? (
             <tr>
               <td colSpan="5" style={{ textAlign: 'center', color: '#888' }}>
-                Waiting for trade updates...
+                Waiting for trades...
               </td>
             </tr>
+          ) : (
+            tableData.map((row, i) => (
+              <tr key={i}>
+                <td>{row.time}</td>
+                <td>{row.type}</td>
+                <td>${Number(row.amount).toFixed(2)}</td>
+                <td>${Number(row.price).toFixed(2)}</td>
+                <td className={row.pnl >= 0 ? 'positive' : 'negative'}>
+                  {row.pnl >= 0 ? '+' : '-'}${Math.abs(Number(row.pnl)).toFixed(2)}
+                </td>
+              </tr>
+            ))
           )}
         </tbody>
       </table>
@@ -215,7 +285,7 @@ function TradingPage() {
         <div className="popup">
           <p>Trade Completed!</p>
           <button onClick={() => navigate('/analysis')}>View Analysis</button>
-          <button onClick={() => navigate('/')}>Back to Home</button>
+          <button onClick={() => navigate('/')}>Back Home</button>
         </div>
       )}
     </div>
