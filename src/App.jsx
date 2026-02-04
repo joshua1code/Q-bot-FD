@@ -7,6 +7,8 @@ import TradingPage from './pages/TradingPage';
 import AnalysisPage from './pages/AnalysisPage';
 import './App.css';
 
+import API_BASE_URL from './Constants';
+
 function App() {
   const [balance, setBalance] = useState(0);
   const [currencies, setCurrencies] = useState([]);
@@ -15,47 +17,27 @@ function App() {
   const [hasLoadedBefore, setHasLoadedBefore] = useState(false);
 
   useEffect(() => {
-    const sessionId = localStorage.getItem('sessionId');
-    if (sessionId) setHasLoadedBefore(true);
+    setCurrencies([
+      { code: 'USD', symbol: '$' },
+      { code: 'NGN', symbol: '₦' }
+    ]);
 
-    fetch('https://qbot.mooo.com/api/account', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => {
-        localStorage.setItem('sessionId', data.sessionId);
-        setHasLoadedBefore(true);
-      })
-      .catch(err => console.error('Session API error:', err));
+    const reqHeaders = {};
+    reqHeaders['Content-Type'] = 'application/json';
+    reqHeaders['Accept'] = 'application/json';
 
-    fetch('https://qbot.mooo.com/api/account', {
+    fetch(`${API_BASE_URL}/api/account`, {
       credentials: 'include',
-      headers: { Accept: 'application/json' },
+      headers: reqHeaders
     })
-      .then(res => {
-        if (!res.ok) throw new Error('Account fetch failed');
-        return res.json();
-      })
-      .then(data => setBalance(data.balance || 0))
-      .catch(err => console.error('Account details error:', err));
-
-    fetch('/api/currencies', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => {
-        const list = data.currencies || [
-          { code: 'USD', symbol: '$' },
-          { code: 'EUR', symbol: '€' },
-          { code: 'GBP', symbol: '£' },
-          { code: 'NGN', symbol: '₦' },
-        ];
-        setCurrencies(list);
-        setSelectedCurrency(list[0]?.code || 'USD');
-      })
-      .catch(() => {
-        setCurrencies([
-          { code: 'USD', symbol: '$' },
-          { code: 'EUR', symbol: '€' },
-          { code: 'GBP', symbol: '£' },
-        ]);
-      });
+    .then(res => {
+      if (!res.ok) throw new Error('Account fetch failed');
+      return res.json();
+    })
+    .then(data => {
+      setBalance(data.balance);
+      setSelectedCurrency(data.currency);
+    })
   }, []);
 
   return (
