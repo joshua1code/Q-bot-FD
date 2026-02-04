@@ -14,9 +14,7 @@ const HERO_TAGLINE = [
 const HERO_PARAGRAPH =
   'Our platform gives you real-time market access, automated take-profit & stop-loss, and clean performance analytics — built for both beginners and experienced traders.';
 
-/* ================================
-   HERO (AI RESPONSE STYLE)
-================================ */
+
 const heroContainer = {
   hidden: {},
   visible: {
@@ -37,7 +35,7 @@ const heroItem = {
     y: 0,
     transition: {
       duration: 0.9,
-      ease: [0.22, 1, 0.36, 1] // premium easing
+      ease: [0.22, 1, 0.36, 1] 
     }
   }
 };

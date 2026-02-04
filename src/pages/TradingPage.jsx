@@ -198,11 +198,11 @@ function TradingPage() {
         type: 'time',
         time: { unit: 'minute', tooltipFormat: 'MMM dd, yyyy HH:mm' },
         ticks: { color: '#e0e0e0' },
-        grid: { color: 'rgba(255,255,255,0.1)' },
+        grid: { color: '#e0e0e0' },
       },
       y: {
         ticks: { color: '#e0e0e0' },
-        grid: { color: 'rgba(255,255,255,0.1)' },
+        grid: { color: '#e0e0e0' },
       },
     },
   };
