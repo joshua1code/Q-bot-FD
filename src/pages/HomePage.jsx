@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import '../App.css';
 
-const API_BASE = 'https://qbot.mooo.com/api/trade';
+import API_BASE_URL from '../Constants';
 
 const HERO_TITLE = 'Start Trading';
 const HERO_TAGLINE = [
@@ -87,7 +87,7 @@ function HomePage() {
         setLoadingStocks(true);
         setFetchError(null);
 
-        const response = await fetch(`${API_BASE}/stocks`, {
+        const response = await fetch(`${API_BASE_URL}/api/trade/stocks`, {
           credentials: 'include'
         });
 
