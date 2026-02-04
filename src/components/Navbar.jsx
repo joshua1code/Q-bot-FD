@@ -1,47 +1,37 @@
 import React, { useState } from 'react';
 import logo from '../assets/trading-bot-logo.png';
+import API_BASE_URL from '../Constants';
 import '../App.css';
 
 function Navbar({ balance, currencies, selectedCurrency, setSelectedCurrency }) {
   const [loading, setLoading] = useState(false);
 
-  const currentSymbol =
-    currencies.find(c => c.code === selectedCurrency)?.symbol || '$';
+  const symbol =
+    currencies.find(c => c.code === selectedCurrency)?.symbol || '';
 
   const handleCurrencyChange = async (e) => {
     const newCurrency = e.target.value;
+    if (newCurrency === selectedCurrency) return;
 
-    // Update UI immediately
-    setSelectedCurrency(newCurrency);
     setLoading(true);
 
     try {
-      const res = await fetch('https://qbot.mooo.com/api/account/currency', {
+      const res = await fetch(`${API_BASE_URL}/api/account/currency`, {
         method: 'POST',
-        credentials: 'include', // REQUIRED for session cookie
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
-        body: JSON.stringify({
-          currency: newCurrency,
-        }),
+        body: JSON.stringify({ currency: newCurrency }),
       });
 
-      if (!res.ok) {
-        throw new Error('Failed to update currency');
-      }
+      if (!res.ok) throw new Error('Currency update failed');
 
-      // Optional: read backend response
-      // const data = await res.json();
-      // console.log('Currency updated:', data);
-
+      setSelectedCurrency(newCurrency);
     } catch (err) {
       console.error(err);
-      alert('Currency update failed');
-
-      // Optional rollback if backend fails
-      // setSelectedCurrency(selectedCurrency);
+      alert('Session expired. Refresh the page.');
     } finally {
       setLoading(false);
     }
@@ -50,32 +40,26 @@ function Navbar({ balance, currencies, selectedCurrency, setSelectedCurrency }) 
   return (
     <nav className="navbar">
       <div className="logo-container">
-        <img
-          src={logo}
-          alt="Trading Bot Logo"
-          className="navbar-logo"
-        />
+        <img src={logo} alt="Trading Bot Logo" className="navbar-logo" />
         <span className="app-name">TRADING BOT</span>
       </div>
 
       <div className="navbar-right">
-        {/* Currency dropdown */}
         <select
           className="currency-dropdown"
           value={selectedCurrency}
           onChange={handleCurrencyChange}
           disabled={loading}
         >
-          {currencies.map((cur) => (
+          {currencies.map(cur => (
             <option key={cur.code} value={cur.code}>
-              {cur.code} ({cur.symbol})
+              {cur.code}
             </option>
           ))}
         </select>
 
-        {/* Balance */}
         <div className="balance">
-          Balance: {currentSymbol}{balance.toFixed(2)}
+          Balance: {symbol}{balance.toFixed(2)}
         </div>
       </div>
     </nav>

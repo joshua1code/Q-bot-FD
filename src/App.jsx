@@ -1,44 +1,55 @@
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
-import ChatAssistant from './components/ChatAssistant';
 import HomePage from './pages/HomePage';
 import TradingPage from './pages/TradingPage';
 import AnalysisPage from './pages/AnalysisPage';
-import './App.css';
-
+import ChatAssistant from './components/ChatAssistant';
 import API_BASE_URL from './Constants';
+import './App.css';
 
 function App() {
   const [balance, setBalance] = useState(0);
+  const [currency, setCurrency] = useState(null);
   const [currencies, setCurrencies] = useState([]);
-  const [selectedCurrency, setSelectedCurrency] = useState('USD');
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [hasLoadedBefore, setHasLoadedBefore] = useState(false);
 
   useEffect(() => {
-    setCurrencies([
-      { code: 'USD', symbol: '$' },
-      { code: 'NGN', symbol: '₦' }
-    ]);
+    const initAccount = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/account`, {
+          credentials: 'include',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
 
-    const reqHeaders = {};
-    reqHeaders['Content-Type'] = 'application/json';
-    reqHeaders['Accept'] = 'application/json';
+        if (!res.ok) throw new Error('Account fetch failed');
 
-    fetch(`${API_BASE_URL}/api/account`, {
-      credentials: 'include',
-      headers: reqHeaders
-    })
-    .then(res => {
-      if (!res.ok) throw new Error('Account fetch failed');
-      return res.json();
-    })
-    .then(data => {
-      setBalance(data.balance);
-      setSelectedCurrency(data.currency);
-    })
+        const data = await res.json();
+
+        setBalance(data.balance);
+        setCurrency(data.currency);
+
+        // build dropdown dynamically
+        setCurrencies([
+          { code: data.currency, symbol: data.currency === 'NGN' ? '₦' : '$' },
+          ...(data.currency !== 'USD'
+            ? [{ code: 'USD', symbol: '$' }]
+            : []),
+          ...(data.currency !== 'NGN'
+            ? [{ code: 'NGN', symbol: '₦' }]
+            : []),
+        ]);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    initAccount();
   }, []);
+
+  if (!currency) return null; // wait for session
 
   return (
     <Router>
@@ -46,8 +57,8 @@ function App() {
         <Navbar
           balance={balance}
           currencies={currencies}
-          selectedCurrency={selectedCurrency}
-          setSelectedCurrency={setSelectedCurrency}
+          selectedCurrency={currency}
+          setSelectedCurrency={setCurrency}
         />
 
         <main className="main-content">

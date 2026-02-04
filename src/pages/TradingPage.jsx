@@ -1,40 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-
-// Chart.js core
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from 'chart.js';
-
-// Financial charts
-import { CandlestickController, CandlestickElement } from 'chartjs-chart-financial';
-import 'chartjs-adapter-luxon';
-import { Chart } from 'react-chartjs-2';
+import { createChart, CrosshairMode, ColorType } from 'lightweight-charts';
 import '../App.css';
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-  CandlestickController,
-  CandlestickElement
-);
 
 const API_BASE = 'https://qbot.mooo.com/api/trade';
 const WS_URL = 'wss://qbot.mooo.com/api/trade/chart';
@@ -42,8 +9,12 @@ const WS_URL = 'wss://qbot.mooo.com/api/trade/chart';
 function TradingPage() {
   const location = useLocation();
   const navigate = useNavigate();
+
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  const chartContainerRef = useRef(null);
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
 
   const {
     selectedStock = 'Unknown',
@@ -53,105 +24,165 @@ function TradingPage() {
     timeRange = 'Unknown',
   } = location.state || {};
 
-  const [chartData, setChartData] = useState({
-    datasets: [{ label: `${selectedStock} Price`, type: 'candlestick', data: [] }],
-  });
   const [tableData, setTableData] = useState([]);
-  const [tradeStatus, setTradeStatus] = useState('Connecting...');
+  const [tradeStatus, setTradeStatus] = useState('Preparing...');
   const [showPopup, setShowPopup] = useState(false);
-  const [wsError, setWsError] = useState(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // 1️⃣ START BOT
+  // 1. START BOT
   useEffect(() => {
     const startBot = async () => {
+      if (!selectedStock || Number(amount) <= 0 || !timeRange) {
+        setTradeStatus('Incomplete setup');
+        setErrorMessage('Missing required trade parameters.');
+        return;
+      }
+
+      if (!document.cookie.includes('session_id=')) {
+        setTradeStatus('Login required');
+        setErrorMessage('Please log in to start a trade.');
+        return;
+      }
+
+      setTradeStatus('Starting trade...');
+      setErrorMessage('');
+
       try {
+        const payload = {
+          stock: selectedStock,
+          amount: Number(amount),
+          currency: 'USD',
+          stop_loss: stopLoss ? Number(stopLoss) : null,
+          take_profit: takeProfit ? Number(takeProfit) : null,
+          duration: timeRange,
+        };
+
         const res = await fetch(API_BASE, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ stock: selectedStock, amount }),
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
         });
+
         if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          console.error('Bot start failed:', res.status, res.statusText, errText);
-          setTradeStatus('Failed to start bot');
-        } else {
-          console.log('Bot start requested (status:', res.status, ')');
+          const errData = await res.json().catch(() => ({}));
+          const msg = errData.detail?.map(d => d.msg).join('; ') || res.statusText;
+          throw new Error(`Server error ${res.status}: ${msg}`);
         }
+
+        setTradeStatus('Trade started – connecting to chart...');
       } catch (err) {
-        console.error('Failed to start trade bot:', err);
-        setTradeStatus('Failed to start bot');
+        console.error('Start bot failed:', err);
+        setTradeStatus('Failed to start trade');
+        setErrorMessage(err.message);
       }
     };
+
     startBot();
-  }, [selectedStock, amount]);
+  }, [selectedStock, amount, stopLoss, takeProfit, timeRange]);
 
+  // 2. Create chart – using safe line series
+  useEffect(() => {
+    if (!chartContainerRef.current) return;
 
+    try {
+      const chart = createChart(chartContainerRef.current, {
+        width: chartContainerRef.current.clientWidth,
+        height: 400,
+        layout: {
+          background: { type: ColorType.Solid, color: '#0f1117' },
+          textColor: '#e0e0e0',
+        },
+        grid: {
+          vertLines: { color: 'rgba(255,255,255,0.08)' },
+          horzLines: { color: 'rgba(255,255,255,0.08)' },
+        },
+        crosshair: { mode: CrosshairMode.Normal },
+        timeScale: { timeVisible: true, secondsVisible: false },
+      });
+
+      const priceSeries = chart.addLineSeries({
+        color: '#26a69a',
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+
+      chartRef.current = chart;
+      seriesRef.current = priceSeries;
+
+      const resizeObserver = new ResizeObserver(() => {
+        chart.applyOptions({ width: chartContainerRef.current?.clientWidth || 800 });
+      });
+      resizeObserver.observe(chartContainerRef.current);
+
+      return () => {
+        resizeObserver.disconnect();
+        chart.remove();
+      };
+    } catch (err) {
+      console.error('Chart creation failed:', err);
+      setErrorMessage('Failed to initialize chart');
+    }
+  }, []);
+
+  // 3. WebSocket
   useEffect(() => {
     let isMounted = true;
 
     const connectWs = () => {
-      if (!isMounted) return;
+      if (!isMounted || tradeStatus === 'Failed to start trade' || tradeStatus === 'Completed') return;
 
-      console.log('Attempting WebSocket connection...');
       setTradeStatus('Connecting to live data...');
-      setWsError(null);
 
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('Chart WebSocket connected');
+        console.log('WS connected');
         setTradeStatus('Running');
-        setWsError(null);
       };
 
       ws.onmessage = (event) => {
-        console.log('WS message received:', event.data); // ← key debug line
-
         let payload;
         try {
           payload = JSON.parse(event.data);
-          console.log('Parsed payload:', payload);
-        } catch (e) {
-          console.warn('Invalid WS JSON:', event.data);
+        } catch {
           return;
         }
 
-        // Candlestick batch
         if (Array.isArray(payload)) {
-          setChartData({
-            datasets: [
-              {
-                label: `${selectedStock} Price`,
-                type: 'candlestick',
-                data: payload.map((c) => ({
-                  x: new Date(c.time || c.timestamp),
-                  o: Number(c.open) || 0,
-                  h: Number(c.high) || 0,
-                  l: Number(c.low) || 0,
-                  c: Number(c.close) || 0,
-                })),
-              },
-            ],
-          });
+          const points = payload
+            .map(c => ({
+              time: Math.floor((new Date(c.time || c.timestamp)).getTime() / 1000),
+              value: Number(c.close) || 0,
+            }))
+            .filter(p => p.time > 0)
+            .sort((a, b) => a.time - b.time);
+
+          seriesRef.current?.setData(points);
         }
 
-        // Trade execution
         if (payload?.type === 'trade') {
-          setTableData((prev) => [
-            {
-              time: payload.time || '—',
-              type: payload.side || '—',
-              amount: Number(payload.amount) || 0,
-              price: Number(payload.price) || 0,
-              pnl: Number(payload.pnl) || 0,
-            },
-            ...prev,
-          ]);
+          setTableData(prev => [{
+            time: payload.time || '—',
+            type: payload.side || '—',
+            amount: Number(payload.amount) || 0,
+            price: Number(payload.price) || 0,
+            pnl: Number(payload.pnl) || 0,
+          }, ...prev]);
+
+          if (payload.close && seriesRef.current) {
+            seriesRef.current.update({
+              time: Math.floor((new Date(payload.time)).getTime() / 1000),
+              value: Number(payload.close),
+            });
+          }
         }
 
-        // Completion
         if (payload?.status === 'completed') {
           setTradeStatus('Completed');
           setShowPopup(true);
@@ -160,15 +191,13 @@ function TradingPage() {
       };
 
       ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        setWsError('Connection error – retrying...');
+        console.error('WS error:', err);
+        setTradeStatus('Connection error – retrying...');
       };
 
-      ws.onclose = (e) => {
-        console.log('WebSocket closed:', e.code, e.reason);
-        if (isMounted) {
-          setWsError(`Disconnected (code ${e.code}) – retrying...`);
-          // Reconnect after delay (avoid rapid loop if auth issue)
+      ws.onclose = () => {
+        if (isMounted && tradeStatus !== 'Completed' && tradeStatus !== 'Failed to start trade') {
+          setTradeStatus('Reconnecting...');
           reconnectTimerRef.current = setTimeout(connectWs, 5000);
         }
       };
@@ -179,33 +208,9 @@ function TradingPage() {
     return () => {
       isMounted = false;
       clearTimeout(reconnectTimerRef.current);
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
+      if (wsRef.current) wsRef.current.close();
     };
-  }, [selectedStock]);
-
-  // Chart options (unchanged)
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: { labels: { color: '#e0e0e0' } },
-      tooltip: { enabled: true },
-    },
-    scales: {
-      x: {
-        type: 'time',
-        time: { unit: 'minute', tooltipFormat: 'MMM dd, yyyy HH:mm' },
-        ticks: { color: '#e0e0e0' },
-        grid: { color: '#e0e0e0' },
-      },
-      y: {
-        ticks: { color: '#e0e0e0' },
-        grid: { color: '#e0e0e0' },
-      },
-    },
-  };
+  }, [tradeStatus, selectedStock]);
 
   return (
     <div className="trading-page">
@@ -213,40 +218,28 @@ function TradingPage() {
 
       <p className="trade-info">
         Amount: ${Number(amount).toFixed(2)} | Duration: {timeRange}
-        {stopLoss && ` | Stop Loss: $${stopLoss}`}
-        {takeProfit && ` | Take Profit: $${takeProfit}`}
+        {stopLoss && ` | Stop Loss: $${Number(stopLoss).toFixed(2)}`}
+        {takeProfit && ` | Take Profit: $${Number(takeProfit).toFixed(2)}`}
       </p>
 
-      <p className="trade-status">
-        Status: {tradeStatus}
-        {wsError && <span style={{ color: '#ff6b6b', marginLeft: '8px' }}>{wsError}</span>}
-      </p>
+      <p className="trade-status">Status: {tradeStatus}</p>
 
-      {/* Chart with loading overlay */}
-      <div className="chart-container" style={{ height: 400, position: 'relative' }}>
-        {chartData.datasets[0].data.length === 0 && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(0,0,0,0.4)',
-              color: '#aaa',
-              fontSize: '1.2rem',
-              zIndex: 1,
-            }}
-          >
-            {tradeStatus.includes('Connecting') || tradeStatus === 'Running'
-              ? 'Waiting for live chart data...'
-              : 'No data available'}
-          </div>
+      {errorMessage && (
+        <p style={{ color: '#ff6b6b', margin: '1rem 0', textAlign: 'center' }}>
+          {errorMessage}
+        </p>
+      )}
+
+      <div
+        ref={chartContainerRef}
+        className="chart-container"
+        style={{ height: 400, width: '100%', position: 'relative' }}
+      >
+        {(tradeStatus.includes('Connecting') || tradeStatus === 'Reconnecting...') && (
+          <div className="chart-overlay">Waiting for live chart data...</div>
         )}
-        <Chart type="candlestick" data={chartData} options={chartOptions} />
       </div>
 
-      {/* Trade History Table */}
       <table className="data-table">
         <thead>
           <tr>
@@ -269,10 +262,10 @@ function TradingPage() {
               <tr key={i}>
                 <td>{row.time}</td>
                 <td>{row.type}</td>
-                <td>${Number(row.amount).toFixed(2)}</td>
-                <td>${Number(row.price).toFixed(2)}</td>
+                <td>${row.amount.toFixed(2)}</td>
+                <td>${row.price.toFixed(2)}</td>
                 <td className={row.pnl >= 0 ? 'positive' : 'negative'}>
-                  {row.pnl >= 0 ? '+' : '-'}${Math.abs(Number(row.pnl)).toFixed(2)}
+                  {row.pnl >= 0 ? '+' : '-'}${Math.abs(row.pnl).toFixed(2)}
                 </td>
               </tr>
             ))
@@ -280,7 +273,6 @@ function TradingPage() {
         </tbody>
       </table>
 
-      {/* Completion Popup */}
       {showPopup && (
         <div className="popup">
           <p>Trade Completed!</p>

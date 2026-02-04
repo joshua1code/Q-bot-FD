@@ -14,51 +14,33 @@ const HERO_TAGLINE = [
 const HERO_PARAGRAPH =
   'Our platform gives you real-time market access, automated take-profit & stop-loss, and clean performance analytics — built for both beginners and experienced traders.';
 
-
 const heroContainer = {
   hidden: {},
   visible: {
     transition: {
-      delayChildren: 0.9,   // AI thinking pause
-      staggerChildren: 0.55 // calm line-by-line reveal
-    }
-  }
+      delayChildren: 0.9,
+      staggerChildren: 0.55,
+    },
+  },
 };
 
 const heroItem = {
-  hidden: {
-    opacity: 0,
-    y: 14
-  },
+  hidden: { opacity: 0, y: 14 },
   visible: {
     opacity: 1,
     y: 0,
-    transition: {
-      duration: 0.9,
-      ease: [0.22, 1, 0.36, 1] 
-    }
-  }
+    transition: { duration: 0.9, ease: [0.22, 1, 0.36, 1] },
+  },
 };
 
-/* ================================
-   TRADE CARD
-================================ */
 const tradeCardVariants = {
-  hidden: {
-    opacity: 0,
-    y: 40,
-    scale: 0.96
-  },
+  hidden: { opacity: 0, y: 40, scale: 0.96 },
   visible: {
     opacity: 1,
     y: 0,
     scale: 1,
-    transition: {
-      duration: 0.85,
-      delay: 0.35, // waits after hero finishes
-      ease: [0.22, 1, 0.36, 1]
-    }
-  }
+    transition: { duration: 0.85, delay: 0.35, ease: [0.22, 1, 0.36, 1] },
+  },
 };
 
 function HomePage() {
@@ -66,35 +48,46 @@ function HomePage() {
   const [loadingStocks, setLoadingStocks] = useState(true);
   const [fetchError, setFetchError] = useState(null);
 
-  const [selectedStock, setSelectedStock] = useState('');
+  const [selectedStock, setSelectedStock] = useState(null); // now object, not just string
   const [amount, setAmount] = useState('');
   const [stopLoss, setStopLoss] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
   const [timeRange, setTimeRange] = useState('');
 
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
   const [heroDone, setHeroDone] = useState(false);
 
   const navigate = useNavigate();
 
-  /* ================================
-     FETCH STOCKS
-  ================================ */
+  // Fetch stocks (expects array of { symbol, name, logo })
   useEffect(() => {
     const fetchStocks = async () => {
       try {
         setLoadingStocks(true);
         setFetchError(null);
 
-        const response = await fetch(`${API_BASE_URL}/api/trade/stocks`, {
-          credentials: 'include'
+        const res = await fetch(`${API_BASE_URL}/api/trade/stocks`, {
+          credentials: 'include',
         });
 
-        if (!response.ok) throw new Error('Failed to load assets');
+        if (!res.ok) throw new Error(`Failed to load assets (${res.status})`);
 
-        const data = await response.json();
-        setStocks(Array.isArray(data) ? data.map(s => s.symbol || s) : []);
+        const data = await res.json();
+
+        // Ensure we have expected shape
+        const formatted = Array.isArray(data)
+          ? data.map(item => ({
+              symbol: item.symbol || item.code || item.ticker || '',
+              name: item.name || item.fullName || item.symbol || '',
+              logo: item.logo || item.icon || getFallbackLogo(item.symbol),
+            })).filter(s => s.symbol)
+          : [];
+
+        setStocks(formatted);
       } catch (err) {
-        setFetchError(err.message);
+        console.error(err);
+        setFetchError('Could not load markets. Please try again.');
       } finally {
         setLoadingStocks(false);
       }
@@ -103,30 +96,40 @@ function HomePage() {
     fetchStocks();
   }, []);
 
+  const getFallbackLogo = (symbol) => {
+    const initial = symbol?.charAt(0)?.toUpperCase() || '?';
+    const bg = Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+    return `https://ui-avatars.com/api/?name=${initial}&background=${bg}&color=fff&size=64`;
+  };
+
+  const isFormValid =
+    selectedStock?.symbol &&
+    amount &&
+    Number(amount) > 0 &&
+    timeRange;
+
   const handleStartTrade = () => {
-    if (!selectedStock || !amount || Number(amount) <= 0) {
-      alert('Please select an asset and enter a valid amount');
+    if (!isFormValid) {
+      alert('Please select an asset, enter a valid amount, and choose a duration.');
       return;
     }
 
     navigate('/trading', {
       state: {
-        selectedStock,
+        selectedStock: selectedStock.symbol,
+        stockName: selectedStock.name,
         amount: Number(amount),
         stopLoss: stopLoss ? Number(stopLoss) : undefined,
         takeProfit: takeProfit ? Number(takeProfit) : undefined,
-        timeRange
-      }
+        timeRange,
+      },
     });
   };
 
   return (
     <div className="home-page">
       <div className="home-container">
-
-        {/* ================================
-           HERO SUMMARY (AI RESPONSE)
-        ================================ */}
+        {/* Hero */}
         <motion.div
           className="hero-summary"
           variants={heroContainer}
@@ -134,10 +137,7 @@ function HomePage() {
           animate="visible"
           onAnimationComplete={() => setHeroDone(true)}
         >
-          <motion.h1 variants={heroItem}>
-            {HERO_TITLE}
-          </motion.h1>
-
+          <motion.h1 variants={heroItem}>{HERO_TITLE}</motion.h1>
           <motion.p className="tagline" variants={heroItem}>
             {HERO_TAGLINE.map((line, idx) => (
               <span key={idx}>
@@ -146,15 +146,12 @@ function HomePage() {
               </span>
             ))}
           </motion.p>
-
           <motion.div className="summary-text" variants={heroItem}>
             <p>{HERO_PARAGRAPH}</p>
           </motion.div>
         </motion.div>
 
-        {/* ================================
-           TRADE CARD (AFTER HERO)
-        ================================ */}
+        {/* Trade Card */}
         <AnimatePresence>
           {heroDone && (
             <motion.div
@@ -162,69 +159,111 @@ function HomePage() {
               variants={tradeCardVariants}
               initial="hidden"
               animate="visible"
-              exit="hidden"
             >
               <h2>New Trade</h2>
 
+              {/* Custom Dropdown with Logos */}
               <div className="form-group">
                 <label>Asset</label>
                 {loadingStocks ? (
-                  <div className="loading-select">Loading assets...</div>
+                  <div className="loading-select">Loading markets...</div>
                 ) : fetchError ? (
                   <div className="error-select">{fetchError}</div>
+                ) : stocks.length === 0 ? (
+                  <div className="error-select">No assets available</div>
                 ) : (
-                  <select
-                    value={selectedStock}
-                    onChange={(e) => setSelectedStock(e.target.value)}
-                  >
-                    <option value="">Select market...</option>
-                    {stocks.map(symbol => (
-                      <option key={symbol} value={symbol}>
-                        {symbol}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="custom-select-wrapper">
+                    <div
+                      className="custom-select-display"
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    >
+                      {selectedStock ? (
+                        <>
+                          <img
+                            src={selectedStock.logo}
+                            alt={selectedStock.symbol}
+                            className="stock-logo"
+                            onError={(e) => (e.target.src = getFallbackLogo(selectedStock.symbol))}
+                          />
+                          <span>{selectedStock.symbol} — {selectedStock.name}</span>
+                        </>
+                      ) : (
+                        <span>Select asset...</span>
+                      )}
+                      <span className="dropdown-arrow">{isDropdownOpen ? '▲' : '▼'}</span>
+                    </div>
+
+                    {isDropdownOpen && (
+                      <div className="custom-select-options">
+                        {stocks.map((stock) => (
+                          <div
+                            key={stock.symbol}
+                            className="custom-select-option"
+                            onClick={() => {
+                              setSelectedStock(stock);
+                              setIsDropdownOpen(false);
+                            }}
+                          >
+                            <img
+                              src={stock.logo}
+                              alt={stock.symbol}
+                              className="stock-logo"
+                              onError={(e) => (e.target.src = getFallbackLogo(stock.symbol))}
+                            />
+                            <span>
+                              {stock.symbol} — {stock.name || stock.symbol}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
+              {/* Amount */}
               <div className="form-group">
                 <label>Amount (USD)</label>
                 <input
                   type="number"
+                  min="1"
+                  step="0.01"
                   placeholder="100.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                 />
               </div>
 
+              {/* Stop Loss & Take Profit */}
               <div className="form-row">
                 <div className="form-group half">
-                  <label>Stop Loss</label>
+                  <label>Stop Loss (USD)</label>
                   <input
                     type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="—"
                     value={stopLoss}
                     onChange={(e) => setStopLoss(e.target.value)}
-                    placeholder="—"
                   />
                 </div>
-
                 <div className="form-group half">
-                  <label>Take Profit</label>
+                  <label>Take Profit (USD)</label>
                   <input
                     type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="—"
                     value={takeProfit}
                     onChange={(e) => setTakeProfit(e.target.value)}
-                    placeholder="—"
                   />
                 </div>
               </div>
 
+              {/* Duration */}
               <div className="form-group">
                 <label>Duration</label>
-                <select
-                  value={timeRange}
-                  onChange={(e) => setTimeRange(e.target.value)}
-                >
+                <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)}>
                   <option value="">Select duration...</option>
                   <option value="5m">5 minutes</option>
                   <option value="15m">15 minutes</option>
@@ -234,13 +273,18 @@ function HomePage() {
                 </select>
               </div>
 
-              <button className="start-trade-btn" onClick={handleStartTrade}>
+              {/* Start Button */}
+              <button
+                className="start-trade-btn"
+                onClick={handleStartTrade}
+                disabled={!isFormValid}
+                style={{ opacity: isFormValid ? 1 : 0.6, cursor: isFormValid ? 'pointer' : 'not-allowed' }}
+              >
                 Start Trade
               </button>
             </motion.div>
           )}
         </AnimatePresence>
-
       </div>
     </div>
   );
