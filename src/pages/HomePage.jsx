@@ -48,7 +48,7 @@ function HomePage() {
   const [loadingStocks, setLoadingStocks] = useState(true);
   const [fetchError, setFetchError] = useState(null);
 
-  const [selectedStock, setSelectedStock] = useState(null); // now object, not just string
+  const [selectedStock, setSelectedStock] = useState(null); // object now
   const [amount, setAmount] = useState('');
   const [stopLoss, setStopLoss] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
@@ -60,7 +60,6 @@ function HomePage() {
 
   const navigate = useNavigate();
 
-  // Fetch stocks (expects array of { symbol, name, logo })
   useEffect(() => {
     const fetchStocks = async () => {
       try {
@@ -75,7 +74,6 @@ function HomePage() {
 
         const data = await res.json();
 
-        // Ensure we have expected shape
         const formatted = Array.isArray(data)
           ? data.map(item => ({
               symbol: item.symbol || item.code || item.ticker || '',
@@ -129,7 +127,7 @@ function HomePage() {
   return (
     <div className="home-page">
       <div className="home-container">
-        {/* Hero */}
+        {/* Hero Section */}
         <motion.div
           className="hero-summary"
           variants={heroContainer}
@@ -273,15 +271,16 @@ function HomePage() {
                 </select>
               </div>
 
-              {/* Start Button */}
-              <button
-                className="start-trade-btn"
-                onClick={handleStartTrade}
-                disabled={!isFormValid}
-                style={{ opacity: isFormValid ? 1 : 0.6, cursor: isFormValid ? 'pointer' : 'not-allowed' }}
-              >
-                Start Trade
-              </button>
+              {/* Centered Start Trade Button */}
+              <div className="button-center-wrapper">
+                <button
+                  className="start-trade-btn"
+                  onClick={handleStartTrade}
+                  disabled={!isFormValid}
+                >
+                  Start Trade
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
