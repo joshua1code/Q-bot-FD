@@ -5,7 +5,7 @@ import HomePage from './pages/HomePage';
 import TradingPage from './pages/TradingPage';
 import AnalysisPage from './pages/AnalysisPage';
 import ChatAssistant from './components/ChatAssistant';
-import API_BASE_URL from './Constants';
+import {API_BASE_URL} from './Constants';
 import './App.css';
 
 function App() {
@@ -65,7 +65,14 @@ function App() {
         <main className="main-content">
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/trading" element={<TradingPage />} />
+            <Route path="/trading" element={
+              <TradingPage 
+                balance={balance}
+                setBalance={setBalance}
+                selectedCurrency={currency}
+                setSelectedCurrency={setCurrency}
+              />
+            } />
             <Route path="/analysis" element={<AnalysisPage />} />
           </Routes>
         </main>

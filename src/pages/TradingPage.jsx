@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { createChart, CrosshairMode, ColorType } from 'lightweight-charts';
+import { createChart, CandlestickSeries, CrosshairMode, ColorType } from 'lightweight-charts';
 import '../App.css';
 
-const API_BASE = 'https://qbot.mooo.com/api/trade';
-const WS_URL = 'wss://qbot.mooo.com/api/trade/chart';
+import {API_BASE_URL, WSS_API_BASE_URL} from '../Constants';
 
-function TradingPage() {
+function TradingPage({ setBalance, setSelectedCurrency }) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -17,11 +16,12 @@ function TradingPage() {
   const seriesRef = useRef(null);
 
   const {
-    selectedStock = 'Unknown',
+    selectedStock = 'NULL',
     amount = 0,
     stopLoss,
     takeProfit,
-    timeRange = 'Unknown',
+    timeRange = 'NULL',
+    currency,
   } = location.state || {};
 
   const [tableData, setTableData] = useState([]);
@@ -38,26 +38,19 @@ function TradingPage() {
         return;
       }
 
-      if (!document.cookie.includes('session_id=')) {
-        setTradeStatus('Login required');
-        setErrorMessage('Please log in to start a trade.');
-        return;
-      }
-
       setTradeStatus('Starting trade...');
       setErrorMessage('');
 
       try {
         const payload = {
-          stock: selectedStock,
+          stock_symbol: selectedStock,
           amount: Number(amount),
-          currency: 'USD',
           stop_loss: stopLoss ? Number(stopLoss) : null,
           take_profit: takeProfit ? Number(takeProfit) : null,
           duration: timeRange,
         };
 
-        const res = await fetch(API_BASE, {
+        const res = await fetch(`${API_BASE_URL}/api/trade`, {
           method: 'POST',
           credentials: 'include',
           headers: {
@@ -73,6 +66,11 @@ function TradingPage() {
           throw new Error(`Server error ${res.status}: ${msg}`);
         }
 
+        const data = await res.json();
+
+        setBalance(data.balance);
+        setSelectedCurrency(data.currency);
+
         setTradeStatus('Trade started – connecting to chart...');
       } catch (err) {
         console.error('Start bot failed:', err);
@@ -84,7 +82,7 @@ function TradingPage() {
     startBot();
   }, [selectedStock, amount, stopLoss, takeProfit, timeRange]);
 
-  // 2. Create chart – using safe line series
+  // 2. Create chart – using candlestick series
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -95,6 +93,7 @@ function TradingPage() {
         layout: {
           background: { type: ColorType.Solid, color: '#0f1117' },
           textColor: '#e0e0e0',
+          attributionLogo: false
         },
         grid: {
           vertLines: { color: 'rgba(255,255,255,0.08)' },
@@ -104,15 +103,15 @@ function TradingPage() {
         timeScale: { timeVisible: true, secondsVisible: false },
       });
 
-      const priceSeries = chart.addLineSeries({
-        color: '#26a69a',
-        lineWidth: 2,
+      const candlestickSeries = chart.addSeries(CandlestickSeries, {
         priceLineVisible: false,
         lastValueVisible: false,
+        upColor: '#26a69a',
+        downColor: '#ef5350'
       });
 
       chartRef.current = chart;
-      seriesRef.current = priceSeries;
+      seriesRef.current = candlestickSeries;
 
       const resizeObserver = new ResizeObserver(() => {
         chart.applyOptions({ width: chartContainerRef.current?.clientWidth || 800 });
@@ -133,12 +132,38 @@ function TradingPage() {
   useEffect(() => {
     let isMounted = true;
 
+    const applyData = (data) => {
+      if(data?.type === 'chart'){
+        delete data.type;
+        seriesRef.current.update(data);
+      }else if(data?.type === 'trade'){
+        seriesRef.current.setMarkers([{
+          time: data.time,
+          position: data.order_type === 'BUY' ? 'belowBar' : 'aboveBar',
+          color: data.order_type === 'BUY' ? '#26a69a' : '#ef5350',
+          shape: data.order_type === 'BUY' ? 'arrowUp' : 'arrowDown',
+          text: data.info
+        }]);
+      }else if(data?.type === 'trade_history'){
+        setTableData(prev => [{
+          time: (new Date(data.time * 1000)).toLocaleString(),
+          type: data.order_type,
+          amount: Number(data.amount),
+          price: Number(data.price),
+          pnl: Number(data.pnl)
+        }, ...prev]);
+      }else if(data?.type === 'balance'){
+        setBalance(balance);
+        setSelectedCurrency(currency);
+      }
+    };
+
     const connectWs = () => {
       if (!isMounted || tradeStatus === 'Failed to start trade' || tradeStatus === 'Completed') return;
 
       setTradeStatus('Connecting to live data...');
 
-      const ws = new WebSocket(WS_URL);
+      const ws = new WebSocket(`${WSS_API_BASE_URL}/api/trade/chart`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -154,32 +179,13 @@ function TradingPage() {
           return;
         }
 
-        if (Array.isArray(payload)) {
-          const points = payload
-            .map(c => ({
-              time: Math.floor((new Date(c.time || c.timestamp)).getTime() / 1000),
-              value: Number(c.close) || 0,
-            }))
-            .filter(p => p.time > 0)
-            .sort((a, b) => a.time - b.time);
-
-          seriesRef.current?.setData(points);
-        }
-
-        if (payload?.type === 'trade') {
-          setTableData(prev => [{
-            time: payload.time || '—',
-            type: payload.side || '—',
-            amount: Number(payload.amount) || 0,
-            price: Number(payload.price) || 0,
-            pnl: Number(payload.pnl) || 0,
-          }, ...prev]);
-
-          if (payload.close && seriesRef.current) {
-            seriesRef.current.update({
-              time: Math.floor((new Date(payload.time)).getTime() / 1000),
-              value: Number(payload.close),
-            });
+        if (payload){
+          if(Array.isArray(payload)){
+            for(var i = 0;i < payload.length;i++){
+              applyData();
+            }
+          }else{
+            applyData(payload);
           }
         }
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import logo from '../assets/trading-bot-logo.png';
-import API_BASE_URL from '../Constants';
+import {API_BASE_URL} from '../Constants';
 import '../App.css';
 
 function Navbar({ balance, setBalance, currencies, selectedCurrency, setSelectedCurrency }) {

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import '../App.css';
 
-import API_BASE_URL from '../Constants';
+import {API_BASE_URL} from '../Constants';
 
 const HERO_TITLE = 'Start Trading';
 const HERO_TAGLINE = [
