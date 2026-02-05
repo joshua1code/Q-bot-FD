@@ -3,7 +3,7 @@ import logo from '../assets/trading-bot-logo.png';
 import API_BASE_URL from '../Constants';
 import '../App.css';
 
-function Navbar({ balance, currencies, selectedCurrency, setSelectedCurrency }) {
+function Navbar({ balance, setBalance, currencies, selectedCurrency, setSelectedCurrency }) {
   const [loading, setLoading] = useState(false);
 
   const symbol =
@@ -28,7 +28,10 @@ function Navbar({ balance, currencies, selectedCurrency, setSelectedCurrency }) 
 
       if (!res.ok) throw new Error('Currency update failed');
 
-      setSelectedCurrency(newCurrency);
+      const data = await res.json();
+
+      setBalance(data.balance);
+      setSelectedCurrency(data.currency);
     } catch (err) {
       console.error(err);
       alert('Session expired. Refresh the page.');

@@ -56,6 +56,7 @@ function App() {
       <div className={`app ${isChatOpen ? 'chat-open' : ''}`}>
         <Navbar
           balance={balance}
+          setBalance={setBalance}
           currencies={currencies}
           selectedCurrency={currency}
           setSelectedCurrency={setCurrency}
