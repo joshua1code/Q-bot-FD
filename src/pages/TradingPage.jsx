@@ -103,6 +103,8 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
         timeScale: { timeVisible: true, secondsVisible: false },
       });
 
+      chart.timeScale().fitContent()
+
       const candlestickSeries = chart.addSeries(CandlestickSeries, {
         priceLineVisible: false,
         lastValueVisible: false,
@@ -162,16 +164,14 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
       if (!isMounted || tradeStatus === 'Failed to start trade' || tradeStatus === 'Completed') return;
 
       setTradeStatus('Connecting to live data...');
+      wsRef.current = new WebSocket(`${WSS_API_BASE_URL}/api/trade/chart`);
 
-      const ws = new WebSocket(`${WSS_API_BASE_URL}/api/trade/chart`);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
+      wsRef.current.onopen = () => {
         console.log('WS connected');
         setTradeStatus('Running');
       };
 
-      ws.onmessage = (event) => {
+      wsRef.current.onmessage = (event) => {
         let payload;
         try {
           payload = JSON.parse(event.data);
@@ -192,16 +192,16 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
         if (payload?.status === 'completed') {
           setTradeStatus('Completed');
           setShowPopup(true);
-          ws.close();
+          wsRef.current.close();
         }
       };
 
-      ws.onerror = (err) => {
+      wsRef.current.onerror = (err) => {
         console.error('WS error:', err);
         setTradeStatus('Connection error – retrying...');
       };
 
-      ws.onclose = () => {
+      wsRef.current.onclose = () => {
         if (isMounted && tradeStatus !== 'Completed' && tradeStatus !== 'Failed to start trade') {
           setTradeStatus('Reconnecting...');
           reconnectTimerRef.current = setTimeout(connectWs, 5000);
@@ -216,7 +216,7 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
       clearTimeout(reconnectTimerRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [tradeStatus, selectedStock]);
+  }, []);
 
   return (
     <div className="trading-page">
