@@ -15,7 +15,7 @@
     "chartjs-adapter-luxon": "^1.3.1",
     "chartjs-chart-financial": "^0.2.1",
     "framer-motion": "^12.30.0",
-    "lightweight-charts": "https://pkg.pr.new/lightweight-charts@master",
+    "lightweight-charts": "^4.1.1",
     "luxon": "^3.7.2",
     "react": "^19.2.0",
     "react-chartjs-2": "^5.3.1",
