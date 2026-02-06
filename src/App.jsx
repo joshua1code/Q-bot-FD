@@ -1,17 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'; // Added Link
 import Navbar from './components/Navbar';
 import HomePage from './pages/HomePage';
 import TradingPage from './pages/TradingPage';
 import AnalysisPage from './pages/AnalysisPage';
-import ChatAssistant from './components/ChatAssistant';
-import {API_BASE_URL} from './Constants';
+import ChatAssistant from './pages/ChatAssistant';
+import { API_BASE_URL } from './Constants';
 import './App.css';
 
 function App() {
   const [balance, setBalance] = useState(0);
   const [currency, setCurrency] = useState(null);
   const [currencies, setCurrencies] = useState([]);
+  
+  // Note: isChatOpen state is kept for the Assistant component logic, 
+  // but we are using routing for navigation now.
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
@@ -27,19 +30,13 @@ function App() {
         if (!res.ok) throw new Error('Account fetch failed');
 
         const data = await res.json();
-
         setBalance(data.balance);
         setCurrency(data.currency);
 
-        // build dropdown dynamically
         setCurrencies([
           { code: data.currency, symbol: data.currency === 'NGN' ? '₦' : '$' },
-          ...(data.currency !== 'USD'
-            ? [{ code: 'USD', symbol: '$' }]
-            : []),
-          ...(data.currency !== 'NGN'
-            ? [{ code: 'NGN', symbol: '₦' }]
-            : []),
+          ...(data.currency !== 'USD' ? [{ code: 'USD', symbol: '$' }] : []),
+          ...(data.currency !== 'NGN' ? [{ code: 'NGN', symbol: '₦' }] : []),
         ]);
       } catch (err) {
         console.error(err);
@@ -49,7 +46,7 @@ function App() {
     initAccount();
   }, []);
 
-  if (!currency) return null; // wait for session
+  if (!currency) return null;
 
   return (
     <Router>
@@ -62,8 +59,14 @@ function App() {
           setSelectedCurrency={setCurrency}
         />
 
+        {/* Floating Chat Button on the Left */}
+        <Link to="/chat" className="floating-chat-btn">
+          <span>💬</span>
+        </Link>
+
         <main className="main-content">
           <Routes>
+            {/* HomePage is now the default landing route */}
             <Route path="/" element={<HomePage />} />
             <Route path="/trading" element={
               <TradingPage 
@@ -74,10 +77,9 @@ function App() {
               />
             } />
             <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/chat" element={<ChatAssistant isOpen={true} setIsOpen={setIsChatOpen} />} />
           </Routes>
         </main>
-
-        <ChatAssistant isOpen={isChatOpen} setIsOpen={setIsChatOpen} />
       </div>
     </Router>
   );

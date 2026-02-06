@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import '../App.css';
-
-const API_BASE = 'https://qbot.mooo.com/api/trade';
+import { API_BASE_URL, WSS_API_BASE_URL } from '../Constants';
 
 function AnalysisPage() {
   const [analysisData, setAnalysisData] = useState(null);
@@ -14,7 +13,7 @@ function AnalysisPage() {
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`${API_BASE}/trade`, {
+        const res = await fetch(`${API_BASE_URL}/trade`, {
           method: 'GET',
           credentials: 'include',           // ← sends cookies (session_id)
           headers: {

@@ -254,7 +254,7 @@ html, body {
   height: 56px;
   border-radius: 50%;
   background: rgba(255,255,255,0.15);
-  backdrop-filter: blur(12px);
+  webkit-backdrop-filter: blur(12px);
   color: white;
   border: none;
   font-size: 1.4rem;
@@ -277,7 +277,7 @@ html, body {
   max-width: 720px;
   z-index: 950;
   background: rgba(20,25,40,0.55);
-  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
   border-right: 1px solid rgba(255,255,255,0.12);
   box-shadow: 18px 0 60px rgba(0,0,0,0.6);
   display: flex;
@@ -494,4 +494,30 @@ html, body {
   height: 32px;
   border-radius: 50%;
   object-fit: cover;
+}
+
+
+
+.floating-chat-btn {
+  position: fixed;
+  bottom: 30px;
+  left: 30px; /* Positions it on the left */
+  width: 60px;
+  height: 60px;
+  background-color: #007bff; /* Change to your theme color */
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  text-decoration: none;
+  z-index: 1000;
+  transition: transform 0.2s ease;
+}
+
+.floating-chat-btn:hover {
+  transform: scale(1.1);
+  background-color: #0056b3;
 }
