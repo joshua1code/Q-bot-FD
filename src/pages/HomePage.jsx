@@ -83,6 +83,7 @@ function HomePage() {
           : [];
 
         setStocks(formatted);
+        console.log('Available symbols from /api/trade/stocks:', formatted.map(s => s.symbol));
       } catch (err) {
         console.error(err);
         setFetchError('Could not load markets. Please try again.');
@@ -263,7 +264,7 @@ function HomePage() {
                 <label>Duration</label>
                 <select value={timeRange} onChange={(e) => setTimeRange(e.target.value)}>
                   <option value="">Select duration...</option>
-                  <option value="5m">5 minutes</option>
+                  <option value="60">5 minutes</option>
                   <option value="15m">15 minutes</option>
                   <option value="1h">1 hour</option>
                   <option value="4h">4 hours</option>

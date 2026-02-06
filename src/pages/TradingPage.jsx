@@ -1,18 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { createChart, CrosshairMode, ColorType } from 'lightweight-charts';
 import { API_BASE_URL, WSS_API_BASE_URL } from '../Constants';
 
 function TradingPage({ setBalance, setSelectedCurrency }) {
   const location = useLocation();
-  const navigate = useNavigate();
-  
+
   const chartContainerRef = useRef(null);
-  const chartRef = useRef(null);
   const seriesRef = useRef(null);
   const wsRef = useRef(null);
 
-  // Destructure parameters passed from HomePage
   const {
     selectedStock = 'BTC',
     amount = 0,
@@ -25,210 +22,271 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
   const [errorMessage, setErrorMessage] = useState('');
   const [tableData, setTableData] = useState([]);
 
-  // --- 1. WebSocket Handler ---
- // Modify connectWs to accept sessionId
-const connectWs = useCallback((sessionId) => {
-  if (wsRef.current?.readyState === WebSocket.OPEN) return;
+  const tradeStatusRef = useRef(tradeStatus);
+  useEffect(() => {
+    tradeStatusRef.current = tradeStatus;
+  }, [tradeStatus]);
 
-  let wsUrl = `${WSS_API_BASE_URL}/api/trade/chart`;
-  if (sessionId) {
-    wsUrl += `?qbot_session_id=${encodeURIComponent(sessionId)}`;
-  }
-
-  console.log('🔗 Connecting WebSocket →', wsUrl);
-
-  const ws = new WebSocket(wsUrl);
-  wsRef.current = ws;
-
-  ws.onopen = () => {
-    console.log('✅ WebSocket connection established');
-    setTradeStatus('Live Trading Active');
-  };
-
-  ws.onmessage = (event) => {
-    console.log('📥 WS message:', event.data); // log every message
-    try {
-      const data = JSON.parse(event.data);
-      // your existing handlers...
-    } catch (err) {
-      console.error('Parse error:', err, event.data);
+  // ───────────────────────────────────────────────
+  // WebSocket connection
+  // ───────────────────────────────────────────────
+  const connectWs = useCallback((sessionId = '') => {
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
     }
-  };
 
-  ws.onerror = (err) => console.error('WS error:', err);
-  ws.onclose = (e) => console.log('WS closed:', e.code, e.reason || 'no reason');
-}, []);
+    const wsUrl = sessionId
+      ? `${WSS_API_BASE_URL}/api/trade/chart?qbot_session_id=${encodeURIComponent(sessionId)}`
+      : `${WSS_API_BASE_URL}/api/trade/chart`;
 
-// Then in success path of startTradingBot:
-connectWs(result.qbot_session_id);
+    console.log('Connecting to:', wsUrl);
 
-  // --- 2. Start Bot (Fixes 422 Error) ---
- // --- 2. Start Bot (Fixed Syntax + Enhanced Logging) ---
-useEffect(() => {
-const startTradingBot = async () => {
-  if (!selectedStock || amount <= 0) {
-    setTradeStatus('Invalid Parameters');
-    setErrorMessage('Missing stock or amount. Return to Home.');
-    return;
-  }
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-  try {
-    const payload = {
-      stock_symbol: `${selectedStock}/USDT`,
-      amount: Number(amount),
-      currency: 'USD',
-      duration: String(timeRange || "60"),  // ← Key fix: string
-      stop_loss: stopLoss ? Number(stopLoss) : undefined,
-      take_profit: takeProfit ? Number(takeProfit) : undefined,
+    ws.onopen = () => {
+      console.log('WebSocket → Connected');
     };
 
-    console.log('🚀 Sending /api/trade payload:', payload);
+    ws.onmessage = (event) => {
+      const raw = event.data;
+      if (raw === 'Ready') {
+        setTradeStatus('Live Trading Active');
+        return;
+      }
 
-    const response = await fetch(`${API_BASE_URL}/api/trade`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+      if (typeof raw !== 'string' || !raw.trim().startsWith('{')) return;
 
-    const result = await response.json().catch(() => ({}));
+      try {
+        const data = JSON.parse(raw);
 
-    console.log('📡 /api/trade response status:', response.status);
-    console.log('📄 /api/trade response body:', result);
+        if (data.type === 'chart' && seriesRef.current) {
+          const { type, ...candle } = data;
+          seriesRef.current.update(candle);
+        }
 
-    if (!response.ok) {
-      const details = result.detail
-        ? (Array.isArray(result.detail)
-            ? result.detail.map(d => `${d.loc?.join('.') || 'field'}: ${d.msg}`).join(' | ')
-            : JSON.stringify(result.detail))
-        : result.message || 'Unknown error';
-      throw new Error(`Failed (${response.status}): ${details}`);
+        if (data.type === 'trade_history') {
+          setTableData((prev) => [
+            {
+              time: new Date(data.time * 1000).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              }),
+              type: data.order_type,
+              price: data.price,
+              amount: data.amount,
+              pnl: data.pnl,
+            },
+            ...prev.slice(0, 199), // keep last 200 entries max
+          ]);
+        }
+
+        if (data.status) {
+          setTradeStatus(data.status);
+        }
+      } catch (err) {
+        console.error('WS message parse error:', err, raw);
+      }
+    };
+
+    ws.onerror = (err) => console.error('WebSocket error:', err);
+    ws.onclose = (e) => {
+      console.log('WebSocket closed', e.code, e.reason);
+      // You could add reconnection logic here if desired
+    };
+  }, []);
+
+  // ───────────────────────────────────────────────
+  // Start trading session
+  // ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!selectedStock || amount <= 0) {
+      setTradeStatus('Invalid parameters');
+      setErrorMessage('Stock symbol or amount missing');
+      return;
     }
 
-    // Success path
-    setBalance?.(result.balance);
-    setSelectedCurrency?.(result.currency);
-    setTradeStatus('Trade Started – Connecting to Live Data');
-    connectWs();  // Start WebSocket only on success
-  } catch (err) {
-    console.error('❌ Trade start error:', err);
-    setTradeStatus('Failed to Start Bot');
-    setErrorMessage(`Error: ${err.message}. Check console for details.`);
-  }
-};
+    let isMounted = true;
 
-  startTradingBot();  // ← THIS WAS MISSING BEFORE!
+    const startBot = async () => {
+      try {
+        const payload = {
+          stock_symbol: selectedStock.includes('/') ? selectedStock : `${selectedStock}/USDT`,
+          amount: Number(amount),
+          currency: 'USD',
+          duration: String(timeRange || '60'),
+          stop_loss: stopLoss ? Number(stopLoss) : null,
+          take_profit: takeProfit ? Number(takeProfit) : null,
+        };
 
-  return () => {
-    if (wsRef.current) wsRef.current.close();
-  };
-}, [selectedStock, amount, timeRange, stopLoss, takeProfit, connectWs, setBalance, setSelectedCurrency]);
-  // --- 3. Chart Initialization (Fixes Blank Page) ---
+        console.log('Starting trade →', payload);
+
+        const res = await fetch(`${API_BASE_URL}/api/trade`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          const msg = result.detail
+            ? (Array.isArray(result.detail)
+                ? result.detail.map(d => d.msg || d).join(' • ')
+                : result.detail?.message || result.message || 'Server error')
+            : 'Request failed';
+          throw new Error(msg);
+        }
+
+        if (isMounted) {
+          setBalance?.(result.balance);
+          setSelectedCurrency?.(result.currency || 'USD');
+          setTradeStatus('Trade Started – Connecting WS');
+          connectWs(result.qbot_session_id || '');
+        }
+      } catch (err) {
+        if (isMounted) {
+          console.error(err);
+          setTradeStatus('Failed to start');
+          setErrorMessage(err.message || 'Could not start trading session');
+        }
+      }
+    };
+
+    startBot();
+
+    return () => {
+      isMounted = false;
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [selectedStock, amount, timeRange, stopLoss, takeProfit, connectWs, setBalance, setSelectedCurrency]);
+
+  // ───────────────────────────────────────────────
+  // Chart setup + auto-resize
+  // ───────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    try {
-      const chart = createChart(chartContainerRef.current, {
-        width: chartContainerRef.current.clientWidth,
-        height: 400,
-        layout: {
-          background: { type: ColorType.Solid, color: '#0f1117' },
-          textColor: '#e0e0e0',
-        },
-        grid: {
-          vertLines: { color: '#1e222d' },
-          horzLines: { color: '#1e222d' },
-        },
-        crosshair: { mode: CrosshairMode.Normal },
-        timeScale: { timeVisible: true, secondsVisible: false },
-      });
-
-      // Defensive check for method existence (v4 library check)
-      if (typeof chart.addCandlestickSeries !== 'function') {
-        throw new Error("Library version mismatch: 'addCandlestickSeries' not found.");
-      }
-
-      const candlestickSeries = chart.addCandlestickSeries({
-        upColor: '#00c853',
-        downColor: '#ff6b6b',
+    const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth,
+      height: 480,
+      layout: {
+        background: { type: ColorType.Solid, color: '#0f1117' },
+        textColor: '#d1d5db',
+      },
+      grid: {
+        vertLines: { color: '#1f2937', visible: true },
+        horzLines: { color: '#1f2937', visible: true },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: '#64748b', width: 1 },
+        horzLine: { color: '#64748b', width: 1 },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
         borderVisible: false,
-        wickUpColor: '#00c853',
-        wickDownColor: '#ff6b6b',
-      });
+      },
+      rightPriceScale: {
+        borderVisible: false,
+      },
+    });
 
-      seriesRef.current = candlestickSeries;
-      chartRef.current = chart;
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#10b981',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#10b981',
+      wickDownColor: '#ef4444',
+    });
 
-      const handleResize = () => {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      };
+    seriesRef.current = candlestickSeries;
 
-      window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (entries[0]) {
+        chart.applyOptions({ width: entries[0].contentRect.width });
+      }
+    });
 
-      return () => {
-        window.removeEventListener('resize', handleResize);
-        chart.remove();
-      };
-    } catch (err) {
-      setErrorMessage(`Chart Library Error: ${err.message}`);
-    }
+    resizeObserver.observe(chartContainerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+    };
   }, []);
 
+  // ───────────────────────────────────────────────
+  // Render
+  // ───────────────────────────────────────────────
   return (
-    <div className="main-content">
-      <div className="trading-page">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-          <h2>{selectedStock} / USDT</h2>
-          <span className={`stat-value ${tradeStatus === 'Connected' ? 'positive' : 'negative'}`} style={{ fontSize: '1rem' }}>
-            STATUS: {tradeStatus}
-          </span>
+    <div className="trading-page-container">
+      <div className="trading-header">
+        <h1>{selectedStock}/USDT</h1>
+        <div className={`status-badge ${tradeStatus.toLowerCase().includes('live') || tradeStatus.toLowerCase().includes('active') ? 'active' : 'inactive'}`}>
+          {tradeStatus}
         </div>
+      </div>
 
-        {errorMessage && (
-          <div className="error" style={{ background: 'rgba(255, 107, 107, 0.1)', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
-            <strong>System Error:</strong> {errorMessage}
-          </div>
-        )}
+      {errorMessage && (
+        <div className="error-box">
+          <strong>Error:</strong> {errorMessage}
+        </div>
+      )}
 
-        <div className="chart-container" ref={chartContainerRef} style={{ height: '400px', width: '100%' }}>
-          {tradeStatus === 'Initializing...' && !errorMessage && (
-            <div className="chart-overlay">Establishing Secure Connection...</div>
+      <div className="chart-section">
+        <div className="chart-container" ref={chartContainerRef}>
+          {tradeStatus === 'Initializing...' && (
+            <div className="chart-loading-overlay">
+              Establishing secure connection...
+            </div>
           )}
         </div>
+      </div>
 
-        <div className="summary" style={{ marginTop: '30px' }}>
-          <h3>Live Trade History</h3>
-          <table className="data-table">
+      <div className="history-section">
+        <h2>Trade History</h2>
+        <div className="table-wrapper">
+          <table className="trade-history-table">
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Type</th>
+                <th>Side</th>
                 <th>Price</th>
                 <th>Amount</th>
                 <th>PnL</th>
               </tr>
             </thead>
             <tbody>
-              {tableData.map((row, index) => (
-                <tr key={index}>
-                  <td>{row.time}</td>
-                  <td className={row.type.toLowerCase() === 'buy' ? 'positive' : 'negative'}>
-                    {row.type.toUpperCase()}
-                  </td>
-                  <td>${Number(row.price).toLocaleString()}</td>
-                  <td>{row.amount}</td>
-                  <td className={Number(row.pnl) >= 0 ? 'positive' : 'negative'}>
-                    {Number(row.pnl) >= 0 ? '+' : ''}{Number(row.pnl).toFixed(2)}
-                  </td>
-                </tr>
-              ))}
-              {tableData.length === 0 && (
+              {tableData.length === 0 ? (
                 <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', opacity: 0.5 }}>Waiting for market signals...</td>
+                  <td colSpan={5} className="empty-row">
+                    Waiting for trades...
+                  </td>
                 </tr>
+              ) : (
+                tableData.map((trade, index) => (
+                  <tr key={index}>
+                    <td>{trade.time}</td>
+                    <td className={trade.type === 'buy' ? 'buy' : 'sell'}>
+                      {trade.type.toUpperCase()}
+                    </td>
+                    <td>${Number(trade.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}</td>
+                    <td>{trade.amount}</td>
+                    <td className={trade.pnl >= 0 ? 'profit' : 'loss'}>
+                      {trade.pnl >= 0 ? '+' : ''}{Number(trade.pnl).toFixed(2)}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
