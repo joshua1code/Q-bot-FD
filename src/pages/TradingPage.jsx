@@ -128,7 +128,7 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
       console.error('Chart creation failed:', err);
       setErrorMessage('Failed to initialize chart');
     }
-  }, []);
+  }, [tradeStatus, selectedStock]);
 
   // 3. WebSocket
   useEffect(() => {
