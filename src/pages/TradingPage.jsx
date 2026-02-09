@@ -189,7 +189,7 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
           }
         }
 
-        if (payload?.status === 'completed') {
+        if (payload?.type === 'stop') {
           setTradeStatus('Completed');
           setShowPopup(true);
           wsRef.current.close();
