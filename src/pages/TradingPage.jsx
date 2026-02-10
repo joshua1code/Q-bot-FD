@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { createChart, CandlestickSeries, CrosshairMode, ColorType } from 'lightweight-charts';
+import { createChart, CandlestickSeries, createSeriesMarkers, CrosshairMode, ColorType } from 'lightweight-charts';
 import '../App.css';
 
 import {API_BASE_URL, WSS_API_BASE_URL} from '../Constants';
@@ -14,78 +14,29 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef(null);
+  const markersRef = useRef(null);
 
-  const {
-    selectedStock = 'NULL',
-    amount = 0,
-    stopLoss,
-    takeProfit,
-    timeRange = 'NULL',
-    currency,
-  } = location.state || {};
+  const doTradeRef = useRef(true);
+
+  const [selectedStock, setSelectedStock] = useState('NULL');
+  const [selectedStockName, setSelectedStockName] = useState('NULL');
+  const [amount, setEquityAmount] = useState(0.0);
+  const [stopLoss, setStopLoss] = useState(0.0);
+  const [takeProfit, setTakeProfit] = useState(0.0);
+  const [timeRange, setTimeRange] = useState('NULL');
+  const [currency, setCurrency] = useState('NULL');
 
   const [tableData, setTableData] = useState([]);
+  const [tradeMarkers, setTradeMarkers] = useState([]);
   const [tradeStatus, setTradeStatus] = useState('Preparing...');
   const [showPopup, setShowPopup] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // 1. START BOT
-  useEffect(() => {
-    const startBot = async () => {
-      if (!selectedStock || Number(amount) <= 0 || !timeRange) {
-        setTradeStatus('Incomplete setup');
-        setErrorMessage('Missing required trade parameters.');
-        return;
-      }
-
-      setTradeStatus('Starting trade...');
-      setErrorMessage('');
-
-      try {
-        const payload = {
-          stock_symbol: selectedStock,
-          amount: Number(amount),
-          stop_loss: stopLoss ? Number(stopLoss) : null,
-          take_profit: takeProfit ? Number(takeProfit) : null,
-          duration: timeRange,
-        };
-
-        const res = await fetch(`${API_BASE_URL}/api/trade`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          const msg = errData.detail?.map(d => d.msg).join('; ') || res.statusText;
-          throw new Error(`Server error ${res.status}: ${msg}`);
-        }
-
-        const data = await res.json();
-
-        setBalance(data.balance);
-        setSelectedCurrency(data.currency);
-
-        setTradeStatus('Trade started – connecting to chart...');
-      } catch (err) {
-        console.error('Start bot failed:', err);
-        setTradeStatus('Failed to start trade');
-        setErrorMessage(err.message);
-      }
-    };
-
-    startBot();
-  }, [selectedStock, amount, stopLoss, takeProfit, timeRange]);
-
-  // 2. Create chart – using candlestick series
+  // 1. Create chart – using candlestick series
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    setTradeStatus('Trade started – connecting to chart...');
     try {
       const chart = createChart(chartContainerRef.current, {
         width: chartContainerRef.current.clientWidth,
@@ -112,8 +63,11 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
         downColor: '#ef5350'
       });
 
+      const markers = createSeriesMarkers(candlestickSeries, []);
+
       chartRef.current = chart;
       seriesRef.current = candlestickSeries;
+      markersRef.current = markers;
 
       const resizeObserver = new ResizeObserver(() => {
         chart.applyOptions({ width: chartContainerRef.current?.clientWidth || 800 });
@@ -130,22 +84,36 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
     }
   }, [tradeStatus, selectedStock]);
 
-  // 3. WebSocket
+  // 2. WebSocket
   useEffect(() => {
     let isMounted = true;
+
+    if(!doTradeRef.current){
+      return;
+    }
 
     const applyData = (data) => {
       if(data?.type === 'chart'){
         delete data.type;
         seriesRef.current.update(data);
       }else if(data?.type === 'trade'){
-        seriesRef.current.setMarkers([{
-          time: data.time,
-          position: data.order_type === 'BUY' ? 'belowBar' : 'aboveBar',
-          color: data.order_type === 'BUY' ? '#26a69a' : '#ef5350',
-          shape: data.order_type === 'BUY' ? 'arrowUp' : 'arrowDown',
-          text: data.info
-        }]);
+        /*
+        setTradeMarkers(prev => {
+          const updated = [
+            ...prev,
+            {
+              time: data.time,
+              position: data.order_type === 'BUY' ? 'belowBar' : 'aboveBar',
+              color: data.order_type === 'BUY' ? '#26a69a' : '#ef5350',
+              shape: data.order_type === 'BUY' ? 'arrowUp' : 'arrowDown',
+              text: data.info
+            }
+          ];
+
+          markersRef.current.setMarkers(updated);
+          return updated;
+        });
+        */
       }else if(data?.type === 'trade_history'){
         setTableData(prev => [{
           time: (new Date(data.time * 1000)).toLocaleString(),
@@ -153,11 +121,20 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
           amount: Number(data.amount),
           price: Number(data.price),
           pnl: Number(data.pnl)
-        }, ...prev]);
+        }, ...prev.slice(0, 8)]);
+        setEquityAmount(data.amount);
+      }else if(data?.type === 'trade_info'){
+        setSelectedStockName(data.stock_name);
+        setSelectedStock(data.stock_symbol);
+        setEquityAmount(data.amount);
+        setStopLoss(data.stop_loss);
+        setTakeProfit(data.take_profit);
+        setTimeRange(data.duration);
+        setCurrency(data.currency);
       }else if(data?.type === 'balance'){
         setBalance(balance);
         setSelectedCurrency(currency);
-      }
+      };
     };
 
     const connectWs = () => {
@@ -190,6 +167,7 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
         }
 
         if (payload?.type === 'stop') {
+          doTradeRef.current = false;
           setTradeStatus('Completed');
           setShowPopup(true);
           wsRef.current.close();
@@ -206,6 +184,7 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
           setTradeStatus('Reconnecting...');
           reconnectTimerRef.current = setTimeout(connectWs, 5000);
         }
+        doTradeRef.current = false;
       };
     };
 
@@ -220,10 +199,10 @@ function TradingPage({ setBalance, setSelectedCurrency }) {
 
   return (
     <div className="trading-page">
-      <h2>Live Trading: {selectedStock}</h2>
+      <h2>Live Trading: {selectedStockName}</h2>
 
       <p className="trade-info">
-        Amount: ${Number(amount).toFixed(2)} | Duration: {timeRange}
+        Equity: ${Number(amount).toFixed(2)} | Duration: {timeRange}
         {stopLoss && ` | Stop Loss: $${Number(stopLoss).toFixed(2)}`}
         {takeProfit && ` | Take Profit: $${Number(takeProfit).toFixed(2)}`}
       </p>

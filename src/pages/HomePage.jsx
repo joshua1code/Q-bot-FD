@@ -106,22 +106,41 @@ function HomePage() {
     Number(amount) > 0 &&
     timeRange;
 
-  const handleStartTrade = () => {
+  const handleStartTrade = async () => {
     if (!isFormValid) {
       alert('Please select an asset, enter a valid amount, and choose a duration.');
       return;
     }
 
-    navigate('/trading', {
-      state: {
-        selectedStock: selectedStock.symbol,
-        stockName: selectedStock.name,
+    try {
+      const payload = {
+        stock_symbol: selectedStock.symbol,
         amount: Number(amount),
-        stopLoss: stopLoss ? Number(stopLoss) : undefined,
-        takeProfit: takeProfit ? Number(takeProfit) : undefined,
-        timeRange,
-      },
-    });
+        stop_loss: stopLoss ? Number(stopLoss) : null,
+        take_profit: takeProfit ? Number(takeProfit) : null,
+        duration: timeRange,
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/trade`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        const msg = res.statusText;
+        throw new Error(`Server error ${res.status}: ${msg}`);
+      }
+    } catch (err) {
+      console.error('Start bot failed:', err);
+    }
+
+    navigate('/trading', {});
   };
 
   return (
